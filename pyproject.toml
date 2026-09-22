@@ -1,0 +1,30 @@
+[project]
+name = "adventureworks-agent"
+version = "0.1.0"
+description = "SQL Server execution-plan analysis MCP server + LangGraph CLI client"
+readme = "README.md"
+requires-python = ">=3.13.0, <3.14"
+dependencies = [
+    "mssql-python>=1.0.0",
+    "fastmcp>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "langchain>=0.3.0",
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.2.0",
+    "langchain-mcp-adapters>=0.1.0",
+    "mcp<2.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.14.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+
+[tool.uv]
+package = false
