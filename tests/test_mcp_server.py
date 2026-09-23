@@ -1,5 +1,8 @@
 import pytest
+from mssql_python.exceptions import OperationalError
+
 from adventureworks_agent import mcp_server
+from adventureworks_agent.db import PermissionError_, PlanTooLargeError, ServiceError, SourceUnavailableError
 
 
 class FakeService:
@@ -77,3 +80,63 @@ def test_subtree_tool_delegates(fake_service):
 def test_raw_tool_delegates(fake_service):
     mcp_server.raw(key="dmv:0x01:0:10", reason="debug")
     assert fake_service.calls == [("raw", "dmv:0x01:0:10", 16000, "debug")]
+
+
+class _RaisingService:
+    def __init__(self, exc):
+        self.exc = exc
+
+    def summary(self, key):
+        raise self.exc
+
+
+def _serve_sequence(monkeypatch, services):
+    queue = list(services)
+    resets = []
+    monkeypatch.setattr(mcp_server, "_get_service", lambda: queue[0])
+
+    def fake_reset():
+        resets.append(True)
+        queue.pop(0)
+
+    monkeypatch.setattr(mcp_server, "_reset_service", fake_reset)
+    return resets
+
+
+@pytest.mark.parametrize(
+    "exc,status",
+    [
+        (PermissionError_("VIEW SERVER STATE denied"), "permission"),
+        (SourceUnavailableError("invalid object"), "source_unavailable"),
+        (PlanTooLargeError("too deep"), "plan_too_large"),
+        (ValueError("bad key"), "invalid_argument"),
+    ],
+)
+def test_service_errors_become_status_results(monkeypatch, exc, status):
+    resets = _serve_sequence(monkeypatch, [_RaisingService(exc)])
+
+    result = mcp_server.summary(key="dmv:0x01:0:10")
+
+    assert result["status"] == status
+    assert result["message"]
+    assert resets == []
+
+
+@pytest.mark.parametrize("exc", [OperationalError("link failure", "ddbc"), ServiceError("transient", "deadlock")])
+def test_connection_loss_reconnects_and_retries_once(monkeypatch, fake_service, exc):
+    resets = _serve_sequence(monkeypatch, [_RaisingService(exc), fake_service])
+
+    result = mcp_server.summary(key="dmv:0x01:0:10")
+
+    assert result == {"warnings": []}
+    assert resets == [True]
+
+
+def test_connection_loss_twice_returns_transient_status(monkeypatch):
+    exc = OperationalError("link failure", "ddbc")
+    resets = _serve_sequence(monkeypatch, [_RaisingService(exc), _RaisingService(exc), None])
+
+    result = mcp_server.summary(key="dmv:0x01:0:10")
+
+    assert result["status"] == "transient"
+    assert resets == [True, True]
